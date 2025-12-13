@@ -34,7 +34,7 @@ brew install koekeishiya/formulae/yabai koekeishiya/formulae/skhd
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/mac-windows-manager.git
+   git clone https://github.com/czechdave/mac-windows-manager.git
    cd mac-windows-manager
    ```
 
