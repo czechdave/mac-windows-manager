@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+
+# Tile all visible windows on current space as proportional columns
+# Order file format: window_id:units (default 1 unit per window)
+
+set -euo pipefail
+
+ORDER_DIR="$HOME/.yabai-order"
+mkdir -p "$ORDER_DIR"
+
+# Get current space and display info
+SPACE=$(yabai -m query --spaces --space | jq '.index')
+ORDER_FILE="$ORDER_DIR/space-$SPACE"
+DISPLAY_INFO=$(yabai -m query --displays --space "$SPACE")
+
+# Get display frame
+DISPLAY_X=$(echo "$DISPLAY_INFO" | jq '.frame.x')
+DISPLAY_Y=$(echo "$DISPLAY_INFO" | jq '.frame.y')
+DISPLAY_W=$(echo "$DISPLAY_INFO" | jq '.frame.w')
+DISPLAY_H=$(echo "$DISPLAY_INFO" | jq '.frame.h')
+
+# Get padding values
+TOP_PAD=$(yabai -m config top_padding)
+BOTTOM_PAD=$(yabai -m config bottom_padding)
+LEFT_PAD=$(yabai -m config left_padding)
+RIGHT_PAD=$(yabai -m config right_padding)
+GAP=$(yabai -m config window_gap)
+
+# Calculate usable area
+USABLE_X=$(echo "$DISPLAY_X + $LEFT_PAD" | bc)
+USABLE_Y=$(echo "$DISPLAY_Y + $TOP_PAD" | bc)
+USABLE_W=$(echo "$DISPLAY_W - $LEFT_PAD - $RIGHT_PAD" | bc)
+USABLE_H=$(echo "$DISPLAY_H - $TOP_PAD - $BOTTOM_PAD" | bc)
+
+# Get all visible, non-minimized windows on current space
+WINDOWS=$(yabai -m query --windows --space "$SPACE" | jq '[.[] | select(.["is-visible"] == true and .["is-minimized"] == false and .["is-sticky"] == false)]')
+CURRENT_IDS=$(echo "$WINDOWS" | jq -r '.[].id' | sort -n)
+
+if [ -z "$CURRENT_IDS" ]; then
+    rm -f "$ORDER_FILE"
+    exit 0
+fi
+
+# Build ordered list with units: saved order first, then new windows
+# Format: "id:units id:units ..."
+ORDERED=""
+
+# Load saved order (id:units format)
+declare_saved() {
+    SAVED_IDS=""
+    SAVED_UNITS=""
+    if [ -f "$ORDER_FILE" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            id="${line%%:*}"
+            units="${line#*:}"
+            # Default to 1 if no units specified (backward compat)
+            [ "$units" = "$id" ] && units=1
+            if echo "$CURRENT_IDS" | grep -qx "$id"; then
+                ORDERED="$ORDERED $id:$units"
+                SAVED_IDS="$SAVED_IDS $id"
+            fi
+        done < "$ORDER_FILE"
+    fi
+}
+declare_saved
+
+# Find new windows not in saved order, sorted by x position
+NEW_WITH_POS=""
+for cid in $CURRENT_IDS; do
+    if ! echo "$SAVED_IDS" | grep -qw "$cid"; then
+        x_pos=$(echo "$WINDOWS" | jq -r ".[] | select(.id == $cid) | .frame.x")
+        NEW_WITH_POS="$NEW_WITH_POS
+$x_pos:$cid"
+    fi
+done
+
+# Sort new windows by x position and append with 1 unit
+if [ -n "$NEW_WITH_POS" ]; then
+    SORTED_NEW=$(echo "$NEW_WITH_POS" | grep -v '^$' | sort -t: -k1 -n | cut -d: -f2)
+    for nid in $SORTED_NEW; do
+        ORDERED="$ORDERED $nid:1"
+    done
+fi
+
+ORDERED=$(echo "$ORDERED" | xargs)
+
+# Save updated order
+echo "$ORDERED" | tr ' ' '\n' > "$ORDER_FILE"
+
+WIN_COUNT=$(echo "$ORDERED" | wc -w | xargs)
+
+if [ "$WIN_COUNT" -eq 0 ]; then
+    exit 0
+fi
+
+# Calculate total units
+TOTAL_UNITS=0
+for entry in $ORDERED; do
+    units="${entry#*:}"
+    TOTAL_UNITS=$((TOTAL_UNITS + units))
+done
+
+# Calculate dimensions
+TOTAL_GAPS=$(echo "($WIN_COUNT - 1) * $GAP" | bc)
+AVAILABLE_W=$(echo "$USABLE_W - $TOTAL_GAPS" | bc)
+UNIT_WIDTH=$(echo "$AVAILABLE_W / $TOTAL_UNITS" | bc)
+WIN_HEIGHT=$USABLE_H
+
+# Position each window according to saved order and units
+CURRENT_X=$USABLE_X
+for entry in $ORDERED; do
+    WIN_ID="${entry%%:*}"
+    units="${entry#*:}"
+    WIN_WIDTH=$(echo "$UNIT_WIDTH * $units" | bc)
+
+    yabai -m window "$WIN_ID" --move abs:"$CURRENT_X":"$USABLE_Y" 2>/dev/null || true
+    yabai -m window "$WIN_ID" --resize abs:"$WIN_WIDTH":"$WIN_HEIGHT" 2>/dev/null || true
+
+    CURRENT_X=$(echo "$CURRENT_X + $WIN_WIDTH + $GAP" | bc)
+done

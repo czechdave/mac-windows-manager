@@ -1,0 +1,11 @@
+# skhd configuration for yabai tiling
+
+# Hyper + Up: Increase focused window width by 1 unit
+cmd + ctrl + alt + shift - up : ~/scripts/tile-width-increase.sh
+
+# Hyper + Down: Decrease focused window width by 1 unit
+cmd + ctrl + alt + shift - down : ~/scripts/tile-width-decrease.sh
+
+# Hyper + Left/Right: Swap focused window in order
+cmd + ctrl + alt + shift - left : ~/scripts/tile-swap-left.sh
+cmd + ctrl + alt + shift - right : ~/scripts/tile-swap-right.sh
