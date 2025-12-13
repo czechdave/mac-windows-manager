@@ -1,0 +1,11 @@
+# Build outputs
+MacWindowManager/build/
+*.app
+
+# macOS
+.DS_Store
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
