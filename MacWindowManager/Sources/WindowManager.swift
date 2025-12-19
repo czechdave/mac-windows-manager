@@ -6,7 +6,7 @@ struct WindowInfo {
     let pid: pid_t
     let axWindow: AXUIElement
     let app: NSRunningApplication
-    var frame: CGRect
+    var frame: CGRect  // In CG/AX coordinates (top-left origin)
     let title: String
 }
 
@@ -18,12 +18,18 @@ class WindowManager {
         var focusedApp: AnyObject?
         AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedApplicationAttribute as CFString, &focusedApp)
 
-        guard let appElement = focusedApp else { return nil }
+        guard let appElement = focusedApp else {
+            NSLog("WindowManager: No focused app")
+            return nil
+        }
 
         var focusedWindow: AnyObject?
         AXUIElementCopyAttributeValue(appElement as! AXUIElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
 
-        guard let windowElement = focusedWindow else { return nil }
+        guard let windowElement = focusedWindow else {
+            NSLog("WindowManager: No focused window")
+            return nil
+        }
 
         return windowInfoFromAXElement(windowElement as! AXUIElement)
     }
@@ -33,6 +39,7 @@ class WindowManager {
         var windows: [WindowInfo] = []
 
         // Get window list from CGWindowListCopyWindowInfo
+        // CG coordinates use top-left origin (same as AX)
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return windows
@@ -54,15 +61,16 @@ class WindowManager {
             let height = boundsDict["Height"] ?? 0
             if width < 100 || height < 100 { continue }
 
-            // Get AX element for this window
-            if let axWindow = getAXWindowForPID(pid, windowID: windowID) {
-                let frame = CGRect(
-                    x: boundsDict["X"] ?? 0,
-                    y: boundsDict["Y"] ?? 0,
-                    width: width,
-                    height: height
-                )
+            // CG frame (top-left origin, same as AX)
+            let cgFrame = CGRect(
+                x: boundsDict["X"] ?? 0,
+                y: boundsDict["Y"] ?? 0,
+                width: width,
+                height: height
+            )
 
+            // Get AX element for this specific window by matching frame
+            if let axWindow = getAXWindowByFrame(pid: pid, cgFrame: cgFrame) {
                 let title = windowDict[kCGWindowName as String] as? String ?? ""
 
                 windows.append(WindowInfo(
@@ -70,7 +78,7 @@ class WindowManager {
                     pid: pid,
                     axWindow: axWindow,
                     app: app,
-                    frame: frame,
+                    frame: cgFrame,
                     title: title
                 ))
             }
@@ -82,44 +90,81 @@ class WindowManager {
         return windows
     }
 
-    // Get the main screen's visible frame (excluding menu bar and dock)
+    // Get the screen frame for tiling (uses focused window to determine which screen)
+    // Returns frame in CG/AX coordinates (top-left origin)
     func getScreenFrame() -> CGRect {
-        guard let screen = NSScreen.main else {
-            return CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        // Get the focused window to determine which screen we're on
+        if let focused = getFocusedWindow() {
+            // Find the screen containing this window
+            let windowCenter = CGPoint(
+                x: focused.frame.midX,
+                y: focused.frame.midY
+            )
+
+            // Get display bounds using CG (which uses top-left origin like AX)
+            var displayCount: UInt32 = 0
+            var displayID: CGDirectDisplayID = 0
+            CGGetDisplaysWithPoint(windowCenter, 1, &displayID, &displayCount)
+
+            if displayCount > 0 {
+                let displayBounds = CGDisplayBounds(displayID)
+                // Account for menu bar (approximately 25 pixels)
+                let menuBarHeight: CGFloat = 25
+                return CGRect(
+                    x: displayBounds.origin.x,
+                    y: displayBounds.origin.y + menuBarHeight,
+                    width: displayBounds.width,
+                    height: displayBounds.height - menuBarHeight
+                )
+            }
         }
-        return screen.visibleFrame
+
+        // Fallback: use main display
+        let mainDisplay = CGMainDisplayID()
+        let bounds = CGDisplayBounds(mainDisplay)
+        let menuBarHeight: CGFloat = 25
+        return CGRect(
+            x: bounds.origin.x,
+            y: bounds.origin.y + menuBarHeight,
+            width: bounds.width,
+            height: bounds.height - menuBarHeight
+        )
     }
 
     // Move and resize a window
     func setWindowFrame(_ window: WindowInfo, frame: CGRect) {
-        // Convert from screen coordinates (origin bottom-left) to AX coordinates (origin top-left)
-        guard let screen = NSScreen.main else { return }
-        let screenHeight = screen.frame.height
-
-        let axY = screenHeight - frame.origin.y - frame.height
-
-        var position = CGPoint(x: frame.origin.x, y: axY)
+        var position = CGPoint(x: frame.origin.x, y: frame.origin.y)
         var size = CGSize(width: frame.width, height: frame.height)
+
+        NSLog("WindowManager: Setting \(window.app.localizedName ?? "?") to pos=(\(Int(position.x)), \(Int(position.y))) size=(\(Int(size.width))x\(Int(size.height)))")
 
         var positionValue: AnyObject?
         var sizeValue: AnyObject?
 
-        // Create CFValues
         positionValue = AXValueCreate(.cgPoint, &position)
         sizeValue = AXValueCreate(.cgSize, &size)
 
-        // Set position first, then size
-        if let posVal = positionValue {
-            AXUIElementSetAttributeValue(window.axWindow, kAXPositionAttribute as CFString, posVal)
-        }
+        // Set size first (some apps work better this way)
         if let sizeVal = sizeValue {
-            AXUIElementSetAttributeValue(window.axWindow, kAXSizeAttribute as CFString, sizeVal)
+            let result = AXUIElementSetAttributeValue(window.axWindow, kAXSizeAttribute as CFString, sizeVal)
+            if result != .success {
+                NSLog("WindowManager: Set size failed: \(result.rawValue)")
+            }
+        }
+
+        // Then set position
+        if let posVal = positionValue {
+            let result = AXUIElementSetAttributeValue(window.axWindow, kAXPositionAttribute as CFString, posVal)
+            if result != .success {
+                NSLog("WindowManager: Set position failed: \(result.rawValue)")
+            }
         }
     }
 
     // MARK: - Private helpers
 
-    private func getAXWindowForPID(_ pid: pid_t, windowID: CGWindowID) -> AXUIElement? {
+    // Find the AXUIElement that matches a specific CG frame
+    private func getAXWindowByFrame(pid: pid_t, cgFrame: CGRect) -> AXUIElement? {
         let appElement = AXUIElementCreateApplication(pid)
 
         var windowsRef: AnyObject?
@@ -129,8 +174,32 @@ class WindowManager {
             return nil
         }
 
-        // Try to match by position/size since we can't directly get window ID from AX
-        // Return the first window (usually the main one)
+        // Find the window whose AX frame matches the CG frame
+        for axWindow in windows {
+            var posValue: AnyObject?
+            var sizeValue: AnyObject?
+
+            AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &posValue)
+            AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeValue)
+
+            guard let posVal = posValue, let sizeVal = sizeValue else { continue }
+
+            var axPos = CGPoint.zero
+            var axSize = CGSize.zero
+            AXValueGetValue(posVal as! AXValue, .cgPoint, &axPos)
+            AXValueGetValue(sizeVal as! AXValue, .cgSize, &axSize)
+
+            // Compare with tolerance (window frames can differ by a few pixels)
+            let tolerance: CGFloat = 10
+            if abs(axPos.x - cgFrame.origin.x) < tolerance &&
+               abs(axPos.y - cgFrame.origin.y) < tolerance &&
+               abs(axSize.width - cgFrame.width) < tolerance &&
+               abs(axSize.height - cgFrame.height) < tolerance {
+                return axWindow
+            }
+        }
+
+        // If no exact match, return first window (fallback)
         return windows.first
     }
 
@@ -140,7 +209,7 @@ class WindowManager {
 
         guard let app = NSRunningApplication(processIdentifier: pid) else { return nil }
 
-        // Get position
+        // Get position (AX uses top-left origin, same as CG)
         var positionValue: AnyObject?
         AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue)
         var position = CGPoint.zero
@@ -161,15 +230,11 @@ class WindowManager {
         AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleValue)
         let title = titleValue as? String ?? ""
 
-        // Convert AX coordinates to screen coordinates
-        guard let screen = NSScreen.main else { return nil }
-        let screenHeight = screen.frame.height
-        let screenY = screenHeight - position.y - size.height
-
-        let frame = CGRect(x: position.x, y: screenY, width: size.width, height: size.height)
+        // Frame is already in CG/AX coordinates
+        let frame = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
 
         return WindowInfo(
-            id: 0,  // We don't have the CGWindowID here
+            id: 0,
             pid: pid,
             axWindow: element,
             app: app,

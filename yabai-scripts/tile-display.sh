@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 
-# Tile all visible windows on current space as proportional columns
-# Order file format: window_id:units (default 1 unit per window)
+# Tile all visible windows on a specific display
+# Usage: tile-display.sh <display_index>
 
 set -euo pipefail
 
-# === LOCK AND DEBOUNCE MECHANISM ===
-LOCK_FILE="/tmp/tile-equal.lock"
+DISPLAY_INDEX="${1:-}"
+
+if [ -z "$DISPLAY_INDEX" ]; then
+    echo "Usage: tile-display.sh <display_index>" >&2
+    exit 1
+fi
+
+# === LOCK MECHANISM (per-display) ===
+LOCK_FILE="/tmp/tile-display-$DISPLAY_INDEX.lock"
 
 cleanup() {
     rm -rf "$LOCK_FILE"
@@ -37,18 +44,27 @@ if ! acquire_lock; then
     exit 0
 fi
 
-sleep 0.1  # Debounce: coalesce rapid signals
-# === END LOCK AND DEBOUNCE ===
+sleep 0.05  # Small debounce
+# === END LOCK ===
+
+# Get the focused space on this display
+SPACE=$(yabai -m query --spaces --display "$DISPLAY_INDEX" 2>/dev/null | jq -r '.[] | select(.["has-focus"] == true) | .index' || echo "")
+
+if [ -z "$SPACE" ] || [ "$SPACE" = "null" ]; then
+    # No focused space, get the visible space on this display
+    SPACE=$(yabai -m query --spaces --display "$DISPLAY_INDEX" 2>/dev/null | jq -r '.[] | select(.["is-visible"] == true) | .index' || echo "")
+fi
+
+if [ -z "$SPACE" ] || [ "$SPACE" = "null" ]; then
+    exit 0
+fi
 
 ORDER_DIR="$HOME/.yabai-order"
 mkdir -p "$ORDER_DIR"
-
-# Get current space and display info
-SPACE=$(yabai -m query --spaces --space | jq '.index')
 ORDER_FILE="$ORDER_DIR/space-$SPACE"
-DISPLAY_INFO=$(yabai -m query --displays --space "$SPACE")
 
 # Get display frame
+DISPLAY_INFO=$(yabai -m query --displays --display "$DISPLAY_INDEX")
 DISPLAY_X=$(echo "$DISPLAY_INFO" | jq '.frame.x')
 DISPLAY_Y=$(echo "$DISPLAY_INFO" | jq '.frame.y')
 DISPLAY_W=$(echo "$DISPLAY_INFO" | jq '.frame.w')
@@ -67,7 +83,7 @@ USABLE_Y=$(echo "$DISPLAY_Y + $TOP_PAD" | bc)
 USABLE_W=$(echo "$DISPLAY_W - $LEFT_PAD - $RIGHT_PAD" | bc)
 USABLE_H=$(echo "$DISPLAY_H - $TOP_PAD - $BOTTOM_PAD" | bc)
 
-# Get all visible, non-minimized windows on current space
+# Get all visible, non-minimized windows on the space
 WINDOWS=$(yabai -m query --windows --space "$SPACE" | jq '[.[] | select(.["is-visible"] == true and .["is-minimized"] == false and .["is-sticky"] == false)]')
 CURRENT_IDS=$(echo "$WINDOWS" | jq -r '.[].id' | sort -n)
 
@@ -77,27 +93,20 @@ if [ -z "$CURRENT_IDS" ]; then
 fi
 
 # Build ordered list with units: saved order first, then new windows
-# Format: "id:units id:units ..."
 ORDERED=""
+SAVED_IDS=""
 
-# Load saved order (id:units format)
-declare_saved() {
-    SAVED_IDS=""
-    SAVED_UNITS=""
-    if [ -f "$ORDER_FILE" ]; then
-        while IFS= read -r line || [ -n "$line" ]; do
-            id="${line%%:*}"
-            units="${line#*:}"
-            # Default to 1 if no units specified (backward compat)
-            [ "$units" = "$id" ] && units=1
-            if echo "$CURRENT_IDS" | grep -qx "$id"; then
-                ORDERED="$ORDERED $id:$units"
-                SAVED_IDS="$SAVED_IDS $id"
-            fi
-        done < "$ORDER_FILE"
-    fi
-}
-declare_saved
+if [ -f "$ORDER_FILE" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        id="${line%%:*}"
+        units="${line#*:}"
+        [ "$units" = "$id" ] && units=1
+        if echo "$CURRENT_IDS" | grep -qx "$id"; then
+            ORDERED="$ORDERED $id:$units"
+            SAVED_IDS="$SAVED_IDS $id"
+        fi
+    done < "$ORDER_FILE"
+fi
 
 # Find new windows not in saved order, sorted by x position
 NEW_WITH_POS=""

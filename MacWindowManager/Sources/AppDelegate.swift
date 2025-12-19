@@ -9,29 +9,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isEnabled = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSLog("MacWindowManager: Starting...")
+
         // Check accessibility permissions
-        if !AXIsProcessTrusted() {
+        let trusted = AXIsProcessTrusted()
+        NSLog("MacWindowManager: Accessibility trusted = \(trusted)")
+        if !trusted {
             promptForAccessibility()
         }
 
         // Initialize components
+        NSLog("MacWindowManager: Initializing WindowManager...")
         windowManager = WindowManager()
+
+        NSLog("MacWindowManager: Initializing TileEngine...")
         tileEngine = TileEngine(windowManager: windowManager)
+
+        NSLog("MacWindowManager: Initializing HotkeyManager...")
         hotkeyManager = HotkeyManager()
 
         // Setup hotkeys
+        NSLog("MacWindowManager: Setting up hotkeys...")
         setupHotkeys()
 
         // Setup menu bar
+        NSLog("MacWindowManager: Setting up menu bar...")
         setupMenuBar()
 
         // Setup window change observer
         setupWindowObserver()
 
         // Initial tile
+        NSLog("MacWindowManager: Performing initial tile...")
         tileEngine.tileWindows()
 
-        print("MacWindowManager started")
+        NSLog("MacWindowManager: Started successfully!")
     }
 
     private func promptForAccessibility() {

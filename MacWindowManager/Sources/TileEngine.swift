@@ -27,9 +27,15 @@ class TileEngine {
 
     func tileWindows() {
         let windows = windowManager.getVisibleWindows()
-        guard !windows.isEmpty else { return }
+        NSLog("TileEngine: Found \(windows.count) visible windows")
+
+        guard !windows.isEmpty else {
+            NSLog("TileEngine: No windows to tile")
+            return
+        }
 
         let screenFrame = windowManager.getScreenFrame()
+        NSLog("TileEngine: Screen frame = \(screenFrame)")
 
         // Update order: keep existing order for known windows, append new ones
         updateWindowOrder(windows)
@@ -68,9 +74,14 @@ class TileEngine {
     }
 
     func increaseWidth() {
-        guard let focused = windowManager.getFocusedWindow() else { return }
+        NSLog("TileEngine: increaseWidth called")
+        guard let focused = windowManager.getFocusedWindow() else {
+            NSLog("TileEngine: No focused window found")
+            return
+        }
         let id = windowIdentifier(focused)
         let current = windowUnits[id] ?? 1
+        NSLog("TileEngine: Increasing \(id) from \(current) to \(current + 1)")
         windowUnits[id] = current + 1
         tileWindows()
     }
