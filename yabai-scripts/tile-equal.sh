@@ -37,14 +37,16 @@ if ! acquire_lock; then
     exit 0
 fi
 
+# Capture space BEFORE debounce - focus may shift during sleep
+SPACE=$(yabai -m query --spaces --space | jq '.index')
+
 sleep 0.1  # Debounce: coalesce rapid signals
 # === END LOCK AND DEBOUNCE ===
 
 ORDER_DIR="$HOME/.yabai-order"
 mkdir -p "$ORDER_DIR"
 
-# Get current space and display info
-SPACE=$(yabai -m query --spaces --space | jq '.index')
+# Use the space captured before debounce (not current focus)
 ORDER_FILE="$ORDER_DIR/space-$SPACE"
 DISPLAY_INFO=$(yabai -m query --displays --space "$SPACE")
 
