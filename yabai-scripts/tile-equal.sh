@@ -67,8 +67,17 @@ USABLE_Y=$(echo "$DISPLAY_Y + $TOP_PAD" | bc)
 USABLE_W=$(echo "$DISPLAY_W - $LEFT_PAD - $RIGHT_PAD" | bc)
 USABLE_H=$(echo "$DISPLAY_H - $TOP_PAD - $BOTTOM_PAD" | bc)
 
-# Get all visible, non-minimized windows on current space
-WINDOWS=$(yabai -m query --windows --space "$SPACE" | jq '[.[] | select(.["is-visible"] == true and .["is-minimized"] == false and .["is-sticky"] == false)]')
+# Get only main application windows (AXStandardWindow)
+# Excludes: dialogs, popups, settings panels, system UI, floating windows
+WINDOWS=$(yabai -m query --windows --space "$SPACE" | jq '[.[] | select(
+  .["is-visible"] == true and
+  .["is-minimized"] == false and
+  .["is-sticky"] == false and
+  .subrole == "AXStandardWindow" and
+  .frame.w >= 100 and
+  .frame.h >= 100
+)]')
+
 CURRENT_IDS=$(echo "$WINDOWS" | jq -r '.[].id' | sort -n)
 
 if [ -z "$CURRENT_IDS" ]; then
@@ -150,11 +159,22 @@ UNIT_WIDTH=$(echo "$AVAILABLE_W / $TOTAL_UNITS" | bc)
 WIN_HEIGHT=$USABLE_H
 
 # Position each window according to saved order and units
+# Last window gets remaining width to avoid rounding gaps
 CURRENT_X=$USABLE_X
+RIGHT_EDGE=$(echo "$USABLE_X + $USABLE_W" | bc)
+WIN_INDEX=0
+
 for entry in $ORDERED; do
     WIN_ID="${entry%%:*}"
     units="${entry#*:}"
-    WIN_WIDTH=$(echo "$UNIT_WIDTH * $units" | bc)
+    WIN_INDEX=$((WIN_INDEX + 1))
+
+    if [ "$WIN_INDEX" -eq "$WIN_COUNT" ]; then
+        # Last window: use remaining space to fill to edge
+        WIN_WIDTH=$(echo "$RIGHT_EDGE - $CURRENT_X" | bc)
+    else
+        WIN_WIDTH=$(echo "$UNIT_WIDTH * $units" | bc)
+    fi
 
     yabai -m window "$WIN_ID" --move abs:"$CURRENT_X":"$USABLE_Y" 2>/dev/null || true
     yabai -m window "$WIN_ID" --resize abs:"$WIN_WIDTH":"$WIN_HEIGHT" 2>/dev/null || true

@@ -5,6 +5,9 @@ MacWindowManager/build/
 # macOS
 .DS_Store
 
+# Claude Code
+.claude/settings.local.json
+
 # Xcode
 *.xcodeproj
 *.xcworkspace
