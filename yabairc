@@ -33,7 +33,7 @@ yabai -m signal --add event=application_hidden action="$HOME/scripts/tile-equal.
 yabai -m signal --add event=application_visible action="$HOME/scripts/tile-equal.sh"
 
 # Signals for space/desktop changes (handles window drag between spaces)
-yabai -m signal --add event=space_changed action="$HOME/scripts/tile-equal.sh"
+yabai -m signal --add event=space_changed action="$HOME/scripts/space-changed.sh"
 yabai -m signal --add event=mission_control_exit action="$HOME/scripts/tile-equal.sh"
 
 # Signals for display/monitor changes (handles window drag between displays)

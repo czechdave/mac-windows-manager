@@ -5,6 +5,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(dirname "$0")"
 ORDER_DIR="$HOME/.yabai-order"
 SPACE=$(yabai -m query --spaces --space | jq '.index')
 ORDER_FILE="$ORDER_DIR/space-$SPACE"
@@ -22,7 +23,6 @@ fi
 NEW_ORDER=""
 FOUND=0
 INCREASE_OTHERS=0
-FOCUSED_UNITS=1
 
 while IFS= read -r line || [ -n "$line" ]; do
     id="${line%%:*}"
@@ -31,7 +31,6 @@ while IFS= read -r line || [ -n "$line" ]; do
 
     if [ "$id" = "$FOCUSED_ID" ]; then
         FOUND=1
-        FOCUSED_UNITS=$units
         if [ "$units" -gt 1 ]; then
             # Normal case: decrease this window
             units=$((units - 1))
@@ -63,4 +62,4 @@ fi
 
 # Save and retile
 echo "$NEW_ORDER" | xargs | tr ' ' '\n' > "$ORDER_FILE"
-exec "$HOME/scripts/tile-equal.sh"
+exec "$SCRIPT_DIR/tile-equal.sh"

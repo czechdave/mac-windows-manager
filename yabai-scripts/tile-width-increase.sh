@@ -4,6 +4,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(dirname "$0")"
 ORDER_DIR="$HOME/.yabai-order"
 SPACE=$(yabai -m query --spaces --space | jq '.index')
 ORDER_FILE="$ORDER_DIR/space-$SPACE"
@@ -15,7 +16,7 @@ fi
 
 if [ ! -f "$ORDER_FILE" ]; then
     # No order file yet, run tile-equal first to create it
-    "$HOME/scripts/tile-equal.sh"
+    "$SCRIPT_DIR/tile-equal.sh"
     [ ! -f "$ORDER_FILE" ] && exit 0
 fi
 
@@ -40,4 +41,4 @@ fi
 
 # Save and retile
 echo "$NEW_ORDER" | xargs | tr ' ' '\n' > "$ORDER_FILE"
-exec "$HOME/scripts/tile-equal.sh"
+exec "$SCRIPT_DIR/tile-equal.sh"
